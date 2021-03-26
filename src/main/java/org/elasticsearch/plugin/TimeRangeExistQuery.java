@@ -3,8 +3,8 @@ package org.elasticsearch.plugin;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 import org.apache.lucene.document.Document;
+import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
@@ -46,11 +46,6 @@ public class TimeRangeExistQuery extends Query {
       @Override
       public Scorer scorer(LeafReaderContext context) throws IOException {
         DocIdSetIterator approximation = DocIdSetIterator.all(context.reader().maxDoc());
-        int approximationDoc = approximation.docID();
-        int approximationNextDoc =  approximation.nextDoc();
-        LOG.info(
-            "approximationDoc ids: [{},{}]",
-            approximationDoc, approximationNextDoc);
         /**
          * Object idObject = docId; if (idObject instanceof BytesRef) { idObject = ((BytesRef)
          * idObject).utf8ToString(); } BytesRef bytesRefs= Uid.encodeId(idObject.toString()); //doc
@@ -63,37 +58,29 @@ public class TimeRangeExistQuery extends Query {
 
               @Override
               public boolean matches() throws IOException {
-                int currentId = approximation.docID();
+                int currentId = approximation.nextDoc();
                 Document current = context.reader().document(currentId);
-                LOG.info(
-                    "twoPhase current DOC and param-fields: [{},{}]",
-                    currentId,
-                    fieldsBoosts.keySet());
                 for (String field : fieldsBoosts.keySet()) {
-                  LOG.info(
-                      "twoPhase fields: [{},{}]",
-                      current.getFields().stream()
-                          .map(item -> item.name())
-                          .collect(Collectors.joining(",")),
-                      current.getField(field));
-                  if (null != current.getField(field)) {
-                    String[] value = current.getValues(field);
-                    LOG.info("twoPhase value: [{}]", value);
-                    if (value.length > 0) // here we got the time serials.
-                    {
-                      if (value[0].contains(",")) {
-                        String[] timeValuesInString = value[0].split(",");
-                        LOG.info("twoPhase time values: [{}]", value[0]);
+                  int counter = minMatch;
+                  IndexableField[] fs = current.getFields(field);
+                    for (IndexableField item : fs) {
+                      Number value = item.numericValue();
+                      LOG.info("twoPhase value: [{}]", value);
+                      if(Math.abs(value.longValue()-10)<=timeInterval)
+                      {
+                        counter --;
+                        break;
                       }
                     }
-                  }
+                    if(counter ==0)
+                      return true;
                 }
-                return true;
+                return false;
               }
 
               @Override
               public float matchCost() {
-                return 1000f;
+                return 1f;
               }
             };
         return new ConstantScoreScorer(this, score(), scoreMode, twoPhase);
