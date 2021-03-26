@@ -1,28 +1,18 @@
 package org.elasticsearch.plugin;
 
 import java.io.IOException;
-import java.util.Collection;
-import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
-import org.apache.lucene.index.Term;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanClause.Occur;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.ConstantScoreQuery;
-import org.apache.lucene.search.MatchNoDocsQuery;
+import java.util.TreeMap;
 import org.apache.lucene.search.Query;
-import org.apache.lucene.search.TermQuery;
-import org.elasticsearch.Version;
 import org.elasticsearch.common.ParseField;
 import org.elasticsearch.common.ParsingException;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.XContentParser;
-import org.elasticsearch.index.mapper.FieldNamesFieldMapper;
-import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
 import org.elasticsearch.index.query.QueryShardContext;
 
@@ -30,37 +20,104 @@ import org.elasticsearch.index.query.QueryShardContext;
 public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeExistQueryBuilder> {
   public static final String NAME = "timeExists";
 
-  public static final ParseField FIELD_FIELD = new ParseField("field");
-  private static final ParseField VALUE_FIELD = new ParseField("value");
+  public static final ParseField FIELDS_FIELD = new ParseField("fields");
+  private static final ParseField DOCID_FIELD = new ParseField("docId");
+  private static final ParseField MIN_MATCH_FIELD = new ParseField("minMatch");
+  private static final ParseField TIME_INTERVAL_FIELD = new ParseField("timeInterval");
 
-  private final String fieldName;
+  // filed names, using comma to seperate.
+  private final Map<String, Float> fieldsBoosts;
+  private final String docId;
+  private final Integer minMatch;
+  private final Long timeInterval;
 
-  public TimeRangeExistQueryBuilder(String fieldName) {
-    if (Strings.isEmpty(fieldName)) {
-      throw new IllegalArgumentException("field name is null or empty");
+  public TimeRangeExistQueryBuilder(
+      String docId, Integer minMatch, Long timeInterval, String... fields) {
+    if (fields == null || docId == null || minMatch == null || timeInterval == null)
+      throw new IllegalArgumentException(
+          "fieldsName or docId or minMatch or timeInterval cannot be null.");
+    this.docId = docId;
+    this.minMatch = minMatch;
+    this.timeInterval = timeInterval;
+    this.fieldsBoosts = new TreeMap<>();
+    for (String field : fields) {
+      field(field);
     }
-    this.fieldName = fieldName;
+  }
+
+  public TimeRangeExistQueryBuilder field(String field) {
+    if (Strings.isEmpty(field)) {
+      throw new IllegalArgumentException("supplied field is null or empty.");
+    }
+    this.fieldsBoosts.put(field, AbstractQueryBuilder.DEFAULT_BOOST);
+    return this;
+  }
+  /** Adds a field to run the multi field against with a specific boost. */
+  public TimeRangeExistQueryBuilder field(String field, float boost) {
+    if (Strings.isEmpty(field)) {
+      throw new IllegalArgumentException("supplied field is null or empty.");
+    }
+    checkNegativeBoost(boost);
+    this.fieldsBoosts.put(field, boost);
+    return this;
+  }
+  /** Add several fields to run the query against with a specific boost. */
+  public TimeRangeExistQueryBuilder fields(Map<String, Float> fields) {
+    for (float fieldBoost : fields.values()) {
+      checkNegativeBoost(fieldBoost);
+    }
+    this.fieldsBoosts.putAll(fields);
+    return this;
   }
 
   /** Read from a stream. */
   public TimeRangeExistQueryBuilder(StreamInput in) throws IOException {
     super(in);
-    fieldName = in.readString();
+    docId = in.readString();
+    minMatch = in.readInt();
+    timeInterval = in.readLong();
+    int size = in.readVInt();
+    fieldsBoosts = new TreeMap<>();
+    for (int i = 0; i < size; i++) {
+      String field = in.readString();
+      float boost = in.readFloat();
+      checkNegativeBoost(boost);
+      fieldsBoosts.put(field, boost);
+    }
   }
 
   public static TimeRangeExistQueryBuilder fromXContent(XContentParser parser) throws IOException {
-    String fieldPattern = null;
+    String docId = null;
+    Integer minMatch = null;
+    Long timeInterval = null;
     String queryName = null;
     float boost = AbstractQueryBuilder.DEFAULT_BOOST;
+    Map<String, Float> fieldsBoosts = new HashMap<>();
 
     XContentParser.Token token;
     String currentFieldName = null;
     while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
       if (token == XContentParser.Token.FIELD_NAME) {
         currentFieldName = parser.currentName();
+      } else if (FIELDS_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+        if (token == XContentParser.Token.START_ARRAY) {
+          while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {
+            parseFieldAndBoost(parser, fieldsBoosts);
+          }
+        } else if (token.isValue()) {
+          parseFieldAndBoost(parser, fieldsBoosts);
+        } else {
+          throw new ParsingException(
+              parser.getTokenLocation(),
+              "[" + NAME + "] query does not support [" + currentFieldName + "]");
+        }
       } else if (token.isValue()) {
-        if (FIELD_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
-          fieldPattern = parser.text();
+        if (DOCID_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+          docId = parser.text();
+        } else if (MIN_MATCH_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+          minMatch = parser.intValue();
+        } else if (TIME_INTERVAL_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+          timeInterval = parser.longValue();
         } else if (AbstractQueryBuilder.NAME_FIELD.match(
             currentFieldName, parser.getDeprecationHandler())) {
           queryName = parser.text();
@@ -89,163 +146,79 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
       }
     }
 
-    if (fieldPattern == null) {
-      throw new ParsingException(
-          parser.getTokenLocation(),
-          "[" + TimeRangeExistQueryBuilder.NAME + "] must be provided with a [field]");
-    }
-
-    TimeRangeExistQueryBuilder builder = new TimeRangeExistQueryBuilder(fieldPattern);
+    TimeRangeExistQueryBuilder builder =
+        new TimeRangeExistQueryBuilder(docId, minMatch, timeInterval);
+    builder.fields(fieldsBoosts);
     builder.queryName(queryName);
     builder.boost(boost);
     return builder;
   }
 
-  public static Query newFilter(
-      QueryShardContext context, String fieldPattern, boolean checkRewrite) {
-
-    Collection<String> fields = getMappedField(context, fieldPattern);
-
-    if (fields.isEmpty()) {
-      if (checkRewrite) {
-        throw new IllegalStateException("Rewrite first");
-      } else {
-        return new MatchNoDocsQuery("unmapped field:" + fieldPattern);
+  private static void parseFieldAndBoost(XContentParser parser, Map<String, Float> fieldsBoosts)
+      throws IOException {
+    String fField = null;
+    Float fBoost = AbstractQueryBuilder.DEFAULT_BOOST;
+    char[] fieldText = parser.textCharacters();
+    int end = parser.textOffset() + parser.textLength();
+    for (int i = parser.textOffset(); i < end; i++) {
+      if (fieldText[i] == '^') {
+        int relativeLocation = i - parser.textOffset();
+        fField = new String(fieldText, parser.textOffset(), relativeLocation);
+        fBoost =
+            Float.parseFloat(
+                new String(fieldText, i + 1, parser.textLength() - relativeLocation - 1));
+        break;
       }
     }
-
-    if (context.indexVersionCreated().before(Version.V_6_1_0)) {
-      return newLegacyExistsQuery(context, fields);
+    if (fField == null) {
+      fField = parser.text();
     }
-
-    if (fields.size() == 1) {
-      String field = fields.iterator().next();
-      return newFieldExistsQuery(context, field);
-    }
-
-    BooleanQuery.Builder boolFilterBuilder = new BooleanQuery.Builder();
-    for (String field : fields) {
-      boolFilterBuilder.add(newFieldExistsQuery(context, field), BooleanClause.Occur.SHOULD);
-    }
-    return new ConstantScoreQuery(boolFilterBuilder.build());
-  }
-
-  private static Query newLegacyExistsQuery(QueryShardContext context, Collection<String> fields) {
-    // We create TermsQuery directly here rather than using FieldNamesFieldType.termsQuery()
-    // so we don't end up with deprecation warnings
-    if (fields.size() == 1) {
-      Query filter = newLegacyExistsQuery(context, fields.iterator().next());
-      return new ConstantScoreQuery(filter);
-    }
-
-    BooleanQuery.Builder boolFilterBuilder = new BooleanQuery.Builder();
-    for (String field : fields) {
-      Query filter = newLegacyExistsQuery(context, field);
-      boolFilterBuilder.add(filter, BooleanClause.Occur.SHOULD);
-    }
-    return new ConstantScoreQuery(boolFilterBuilder.build());
-  }
-
-  private static Query newLegacyExistsQuery(QueryShardContext context, String field) {
-    MappedFieldType fieldType = context.fieldMapper(field);
-    String fieldName = fieldType != null ? fieldType.name() : field;
-    return new TermQuery(new Term(FieldNamesFieldMapper.NAME, fieldName));
-  }
-
-  private static Query newFieldExistsQuery(QueryShardContext context, String field) {
-    MappedFieldType fieldType = context.getMapperService().fieldType(field);
-    if (fieldType == null) {
-      // The field does not exist as a leaf but could be an object so
-      // check for an object mapper
-      if (context.getObjectMapper(field) != null) {
-        return newObjectFieldExistsQuery(context, field);
-      }
-      return Queries.newMatchNoDocsQuery("User requested \"match_none\" query.");
-    }
-    Query filter = fieldType.existsQuery(context);
-    return new ConstantScoreQuery(filter);
-  }
-
-  private static Query newObjectFieldExistsQuery(QueryShardContext context, String objField) {
-    BooleanQuery.Builder booleanQuery = new BooleanQuery.Builder();
-    Collection<String> fields = context.simpleMatchToIndexNames(objField + ".*");
-    for (String field : fields) {
-      Query existsQuery = context.getMapperService().fieldType(field).existsQuery(context);
-      booleanQuery.add(existsQuery, Occur.SHOULD);
-    }
-    return new ConstantScoreQuery(booleanQuery.build());
-  }
-
-  /**
-   * Helper method to get field mapped to this fieldPattern
-   *
-   * @return return collection of fields if exists else return empty.
-   */
-  private static Collection<String> getMappedField(QueryShardContext context, String fieldPattern) {
-    final FieldNamesFieldMapper.FieldNamesFieldType fieldNamesFieldType =
-        (FieldNamesFieldMapper.FieldNamesFieldType)
-            context.getMapperService().fieldType(FieldNamesFieldMapper.NAME);
-
-    if (fieldNamesFieldType == null) {
-      // can only happen when no types exist, so no docs exist either
-      return Collections.emptySet();
-    }
-
-    final Collection<String> fields;
-    if (context.getObjectMapper(fieldPattern) != null) {
-      // the _field_names field also indexes objects, so we don't have to
-      // do any more work to support exists queries on whole objects
-      fields = Collections.singleton(fieldPattern);
-    } else {
-      fields = context.simpleMatchToIndexNames(fieldPattern);
-    }
-
-    if (fields.size() == 1) {
-      String field = fields.iterator().next();
-      MappedFieldType fieldType = context.getMapperService().fieldType(field);
-      if (fieldType == null) {
-        // The field does not exist as a leaf but could be an object so
-        // check for an object mapper
-        if (context.getObjectMapper(field) == null) {
-          return Collections.emptySet();
-        }
-      }
-    }
-
-    return fields;
+    fieldsBoosts.put(fField, fBoost);
   }
 
   @Override
   protected void doWriteTo(StreamOutput out) throws IOException {
-    out.writeString(fieldName);
-  }
-
-  /** @return the field name that has to exist for this query to match */
-  public String fieldName() {
-    return this.fieldName;
+    out.writeString(docId);
+    out.writeInt(minMatch);
+    out.writeLong(timeInterval);
+    out.writeVInt(fieldsBoosts.size());
+    for (Map.Entry<String, Float> fieldsEntry : fieldsBoosts.entrySet()) {
+      out.writeString(fieldsEntry.getKey());
+      out.writeFloat(fieldsEntry.getValue());
+    }
   }
 
   @Override
   protected void doXContent(XContentBuilder builder, Params params) throws IOException {
     builder.startObject(NAME);
-    builder.field(FIELD_FIELD.getPreferredName(), fieldName);
+    builder.startArray(FIELDS_FIELD.getPreferredName());
+    for (Map.Entry<String, Float> fieldEntry : this.fieldsBoosts.entrySet()) {
+      builder.value(fieldEntry.getKey() + "^" + fieldEntry.getValue());
+    }
+    builder.endArray();
+    builder.field(DOCID_FIELD.getPreferredName(), docId);
+    builder.field(MIN_MATCH_FIELD.getPreferredName(), minMatch);
+    builder.field(TIME_INTERVAL_FIELD.getPreferredName(), timeInterval);
     printBoostAndQueryName(builder);
     builder.endObject();
   }
 
   @Override
   protected Query doToQuery(QueryShardContext context) throws IOException {
-    return newFilter(context, fieldName, true);
+    return new TimeRangeExistQuery(fieldsBoosts, docId, minMatch, timeInterval);
   }
 
   @Override
   protected int doHashCode() {
-    return Objects.hash(fieldName);
+    return Objects.hash(fieldsBoosts, docId, minMatch, timeInterval);
   }
 
   @Override
   protected boolean doEquals(TimeRangeExistQueryBuilder other) {
-    return Objects.equals(fieldName, other.fieldName);
+    return Objects.equals(fieldsBoosts, other.fieldsBoosts)
+        && Objects.equals(docId, other.docId)
+        && Objects.equals(minMatch, other.minMatch)
+        && Objects.equals(timeInterval, other.timeInterval);
   }
 
   @Override
