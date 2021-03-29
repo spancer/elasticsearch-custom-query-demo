@@ -204,7 +204,7 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
   }
 
   @Override
-  protected Query doToQuery(QueryShardContext context) throws IOException {
+  protected Query doToQuery(QueryShardContext context)  {
     return new TimeRangeExistQuery(fieldsBoosts, docId, minMatch, timeInterval);
   }
 
