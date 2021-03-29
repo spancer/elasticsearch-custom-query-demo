@@ -4,8 +4,9 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.index.IndexableField;
 import org.apache.lucene.index.LeafReaderContext;
+import org.apache.lucene.index.TermState;
+import org.apache.lucene.index.TermsEnum;
 import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -15,6 +16,9 @@ import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
+import org.apache.lucene.util.BytesRef;
+import org.elasticsearch.index.mapper.IdFieldMapper;
+import org.elasticsearch.index.mapper.Uid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,34 +50,36 @@ public class TimeRangeExistQuery extends Query {
       @Override
       public Scorer scorer(LeafReaderContext context) throws IOException {
         DocIdSetIterator approximation = DocIdSetIterator.all(context.reader().maxDoc());
-        /**
-         * Object idObject = docId; if (idObject instanceof BytesRef) { idObject = ((BytesRef)
-         * idObject).utf8ToString(); } BytesRef bytesRefs= Uid.encodeId(idObject.toString()); //doc
-         * id TermsEnum termsEnum = context.reader().terms(IdFieldMapper.NAME).iterator(); TermState
-         * state = termsEnum.termState(); termsEnum.seekExact(bytesRefs, state); long doc =
-         * termsEnum.ord();
-         */
+
+        Object idObject = docId;
+        if (idObject instanceof BytesRef) {
+          LOG.info("instance of byteref...");
+          idObject = ((BytesRef) idObject).utf8ToString();
+        }
+        BytesRef bytesRefs = Uid.encodeId(idObject.toString()); // docid
+        TermsEnum termsEnum = context.reader().terms(IdFieldMapper.NAME).iterator();
+        TermState state = termsEnum.termState();
+        termsEnum.seekExact(bytesRefs, state);
+        termsEnum.next();
+        long doc = termsEnum.ord();
+        LOG.info("Document ID {} in lucence is: {}", docId, doc);
+        int approximationNextDoc = approximation.nextDoc();
         TwoPhaseIterator twoPhase =
             new TwoPhaseIterator(approximation) {
-
               @Override
               public boolean matches() throws IOException {
-                int currentId = approximation.nextDoc();
+                int currentId = approximationNextDoc;
                 Document current = context.reader().document(currentId);
                 for (String field : fieldsBoosts.keySet()) {
                   int counter = minMatch;
-                  IndexableField[] fs = current.getFields(field);
-                    for (IndexableField item : fs) {
-                      Number value = item.numericValue();
-                      LOG.info("twoPhase value: [{}]", value);
-                      if(Math.abs(value.longValue()-10)<=timeInterval)
-                      {
-                        counter --;
-                        break;
-                      }
+                  for (String val : current.getValues(field)) {
+                    LOG.info("docID: {}, field:{}, value: {}", currentId, field, val);
+                    if (Math.abs(Long.parseLong(val) - 10) <= timeInterval) {
+                      counter--;
+                      break;
                     }
-                    if(counter ==0)
-                      return true;
+                  }
+                  if (counter == 0) return true;
                 }
                 return false;
               }
