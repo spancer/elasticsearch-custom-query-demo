@@ -67,6 +67,7 @@ public class TimeRangeExistQuery extends Query {
         targetDoc = targetDocScorer.iterator();
       }
       int targetDocId = targetDoc.nextDoc();
+      LOG.info("target DOC ID:{}", targetDoc);
       return new ConstantScoreScorer(
           this,
           score(),
