@@ -133,6 +133,7 @@ The requirement is somewhat like below:
 </pre>
 
 ###插件参数说明：
+<pre>
     timeRangeExist: 自定义函数名称，跟termquery等类似，可以用在查询，也可以用在过滤上。
     fields: 过滤时，待比较的字段列表，比如经过多个卡口，则每一个卡口(摄像头)就是一个索引的字段；注意：索引时，该字段一定要store=true.
     target_field & target_value, 表示要比较查询的字段与值；该场景即通过该字段与值定位到被尾随的车辆。
@@ -140,6 +141,7 @@ The requirement is somewhat like below:
     target_value: 查询的值，如湘A1DJ29
     minMatch: 最少匹配的字段数量，即匹配fields的个数。
     timeInterval: 时间间隔，单位为：ms。 如果是3分钟的话，请传：3*60*1000
+ </pre>
 ### mapping 示例：
 <pre>
 {
