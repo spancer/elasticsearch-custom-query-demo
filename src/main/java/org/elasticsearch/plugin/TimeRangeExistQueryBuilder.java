@@ -21,22 +21,25 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
   public static final String NAME = "timeRangeExist";
 
   public static final ParseField FIELDS_FIELD = new ParseField("fields");
-  private static final ParseField DOCID_FIELD = new ParseField("docId");
+  public static final ParseField TARGET_FIELD = new ParseField("target_field");
+  private static final ParseField TARGET_VALUE = new ParseField("target_value");
   private static final ParseField MIN_MATCH_FIELD = new ParseField("minMatch");
   private static final ParseField TIME_INTERVAL_FIELD = new ParseField("timeInterval");
 
   // filed names, using comma to seperate.
   private final Map<String, Float> fieldsBoosts;
-  private final String docId;
+  private final String targetField;
+  private final String targetValue;
   private final Integer minMatch;
   private final Long timeInterval;
 
   public TimeRangeExistQueryBuilder(
-      String docId, Integer minMatch, Long timeInterval, String... fields) {
-    if (fields == null || docId == null || minMatch == null || timeInterval == null)
+      String targetField, String targetValue, Integer minMatch, Long timeInterval, String... fields) {
+    if (targetField==null || fields == null || targetValue == null || minMatch == null || timeInterval == null)
       throw new IllegalArgumentException(
-          "fieldsName or docId or minMatch or timeInterval cannot be null.");
-    this.docId = docId;
+          "fieldsName or targetFiled or targetValue or minMatch or timeInterval cannot be null.");
+    this.targetField = targetField;
+    this.targetValue = targetValue;
     this.minMatch = minMatch;
     this.timeInterval = timeInterval;
     this.fieldsBoosts = new TreeMap<>();
@@ -73,7 +76,8 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
   /** Read from a stream. */
   public TimeRangeExistQueryBuilder(StreamInput in) throws IOException {
     super(in);
-    docId = in.readString();
+    targetField = in.readString();
+    targetValue = in.readString();
     minMatch = in.readInt();
     timeInterval = in.readLong();
     int size = in.readVInt();
@@ -88,6 +92,7 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
 
   public static TimeRangeExistQueryBuilder fromXContent(XContentParser parser) throws IOException {
     String docId = null;
+    String docField = null;
     Integer minMatch = null;
     Long timeInterval = null;
     String queryName = null;
@@ -112,7 +117,10 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
               "[" + NAME + "] query does not support [" + currentFieldName + "]");
         }
       } else if (token.isValue()) {
-        if (DOCID_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+        if (TARGET_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
+          docField = parser.text();
+        }
+        else if (TARGET_VALUE.match(currentFieldName, parser.getDeprecationHandler())) {
           docId = parser.text();
         } else if (MIN_MATCH_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
           minMatch = parser.intValue();
@@ -147,7 +155,7 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
     }
 
     TimeRangeExistQueryBuilder builder =
-        new TimeRangeExistQueryBuilder(docId, minMatch, timeInterval);
+        new TimeRangeExistQueryBuilder(docField, docId, minMatch, timeInterval);
     builder.fields(fieldsBoosts);
     builder.queryName(queryName);
     builder.boost(boost);
@@ -178,7 +186,8 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
 
   @Override
   protected void doWriteTo(StreamOutput out) throws IOException {
-    out.writeString(docId);
+    out.writeString(targetField);
+    out.writeString(targetValue);
     out.writeInt(minMatch);
     out.writeLong(timeInterval);
     out.writeVInt(fieldsBoosts.size());
@@ -196,7 +205,8 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
       builder.value(fieldEntry.getKey() + "^" + fieldEntry.getValue());
     }
     builder.endArray();
-    builder.field(DOCID_FIELD.getPreferredName(), docId);
+    builder.field(TARGET_FIELD.getPreferredName(), targetField);
+    builder.field(TARGET_VALUE.getPreferredName(), targetValue);
     builder.field(MIN_MATCH_FIELD.getPreferredName(), minMatch);
     builder.field(TIME_INTERVAL_FIELD.getPreferredName(), timeInterval);
     printBoostAndQueryName(builder);
@@ -205,18 +215,19 @@ public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeEx
 
   @Override
   protected Query doToQuery(QueryShardContext context)  {
-    return new TimeRangeExistQuery(fieldsBoosts, docId, minMatch, timeInterval);
+    return new TimeRangeExistQuery(fieldsBoosts, targetField, targetValue, minMatch, timeInterval);
   }
 
   @Override
   protected int doHashCode() {
-    return Objects.hash(fieldsBoosts, docId, minMatch, timeInterval);
+    return Objects.hash(fieldsBoosts, targetField, targetValue, minMatch, timeInterval);
   }
 
   @Override
   protected boolean doEquals(TimeRangeExistQueryBuilder other) {
     return Objects.equals(fieldsBoosts, other.fieldsBoosts)
-        && Objects.equals(docId, other.docId)
+        && Objects.equals(targetField, other.targetField)
+        && Objects.equals(targetValue, other.targetValue)
         && Objects.equals(minMatch, other.minMatch)
         && Objects.equals(timeInterval, other.timeInterval);
   }

@@ -19,7 +19,6 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
-import org.elasticsearch.index.mapper.IdFieldMapper;
 
 /**
  * @author spancer.ray
@@ -28,14 +27,16 @@ import org.elasticsearch.index.mapper.IdFieldMapper;
 public class TimeRangeExistQuery extends Query {
 
   private Map<String, Float> fieldsBoosts;
-  private String docId;
+  private String docField;
+  private String docValue;
   private Integer minMatch;
   private Long timeInterval = 3 * 60 * 1000L; // default to 3 mins.
 
   public TimeRangeExistQuery(
-      Map<String, Float> fieldsBoosts, String docId, Integer minMatch, Long timeInterval) {
+      Map<String, Float> fieldsBoosts, String docField, String docValue, Integer minMatch, Long timeInterval) {
     this.fieldsBoosts = fieldsBoosts;
-    this.docId = docId;
+    this.docField = docField;
+    this.docValue = docValue;
     this.minMatch = minMatch;
     this.timeInterval = timeInterval;
   }
@@ -49,9 +50,11 @@ public class TimeRangeExistQuery extends Query {
       public Scorer scorer(LeafReaderContext context) throws IOException {
         DocIdSetIterator allDocs = DocIdSetIterator.all(context.reader().maxDoc());
         int targetDocId = NO_MORE_DOCS;
-        TermQuery idQuery = new TermQuery(new Term(IdFieldMapper.NAME, docId));
+        TermQuery idQuery = new TermQuery(new Term(docField, docValue));
         TopDocs hits = searcher.search(idQuery, 1);
-        if (hits.totalHits.value > 0) targetDocId = hits.scoreDocs[0].doc;
+        if (hits.totalHits.value == 0)
+          throw new IOException("Target Doc doesn't exist, make sure field ["+docField+"] indexed with type [keyword]");
+        targetDocId = hits.scoreDocs[0].doc;
         int id = targetDocId;
         TwoPhaseIterator twoPhase =
             new TwoPhaseIterator(allDocs) {
