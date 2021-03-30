@@ -18,7 +18,7 @@ import org.elasticsearch.index.query.QueryShardContext;
 
 /** Constructs a query that only match on documents that the field has a value in them. */
 public class TimeRangeExistQueryBuilder extends AbstractQueryBuilder<TimeRangeExistQueryBuilder> {
-  public static final String NAME = "timeExists";
+  public static final String NAME = "timeRangeExist";
 
   public static final ParseField FIELDS_FIELD = new ParseField("fields");
   private static final ParseField DOCID_FIELD = new ParseField("docId");

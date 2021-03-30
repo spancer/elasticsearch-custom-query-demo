@@ -1,12 +1,13 @@
 package org.elasticsearch.plugin;
 
+import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
+
 import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
+import org.apache.lucene.document.Document;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.BooleanClause.Occur;
-import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -15,81 +16,88 @@ import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.TwoPhaseIterator;
 import org.apache.lucene.search.Weight;
 import org.elasticsearch.index.mapper.IdFieldMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * @author spancer.ray
  * @date 2021/3/26 11:35
  */
 public class TimeRangeExistQuery extends Query {
-  private static final Logger LOG = LoggerFactory.getLogger(TimeRangeExistQuery.class);
 
   private Map<String, Float> fieldsBoosts;
+  private String docId;
   private Integer minMatch;
   private Long timeInterval = 3 * 60 * 1000L; // default to 3 mins.
-  TermQuery targetDocQuery; // query based on id
-  BooleanQuery trailingDocsQuery; // query based on must not.
 
   public TimeRangeExistQuery(
       Map<String, Float> fieldsBoosts, String docId, Integer minMatch, Long timeInterval) {
     this.fieldsBoosts = fieldsBoosts;
+    this.docId = docId;
     this.minMatch = minMatch;
     this.timeInterval = timeInterval;
-    targetDocQuery = new TermQuery(new Term(IdFieldMapper.NAME, docId));
-    trailingDocsQuery = new BooleanQuery.Builder().add(targetDocQuery, Occur.MUST_NOT).build();
   }
 
   @Override
   public Weight createWeight(IndexSearcher searcher, ScoreMode scoreMode, float boost)
       throws IOException {
-    return new TimeRangeExistWeight(searcher);
-  }
+    return new ConstantScoreWeight(this, boost) {
 
-  public class TimeRangeExistWeight extends ConstantScoreWeight {
+      @Override
+      public Scorer scorer(LeafReaderContext context) throws IOException {
+        DocIdSetIterator allDocs = DocIdSetIterator.all(context.reader().maxDoc());
+        int targetDocId = NO_MORE_DOCS;
+        TermQuery idQuery = new TermQuery(new Term(IdFieldMapper.NAME, docId));
+        TopDocs hits = searcher.search(idQuery, 1);
+        if (hits.totalHits.value > 0) targetDocId = hits.scoreDocs[0].doc;
+        int id = targetDocId;
+        TwoPhaseIterator twoPhase =
+            new TwoPhaseIterator(allDocs) {
+              @Override
+              public boolean matches() throws IOException {
+                int currentId = allDocs.docID();
+                //Target Doc may not exist in current reader context search, here we use context.docBase to
+                //get original doc id of current doc in current reader context, so as to compare with target doc id
+                //loaded from top reader context.
+                if (context.docBase + currentId == id) return false;
+                Document current = context.reader().document(currentId);
+                Document target = searcher.getTopReaderContext().reader().document(id);
+                int counter = minMatch;
+                for (String field : fieldsBoosts.keySet()) {
+                  String[] targetValues = target.getValues(field); // k1
+                  breaker:
+                  for (String val : current.getValues(field)) {
+                    for (String targetVal : targetValues) {
+                      long iterval = Long.parseLong(val) - Long.parseLong(targetVal);
+                      if (Math.abs(iterval) <= timeInterval) {
+                        counter--;
+                        break breaker;
+                      }
+                    }
+                  }
+                  if (counter == 0) return true;
+                }
+                return false;
+              }
 
-    Weight targetDocWeight = null;
-    Weight trailingDocsWeight = null;
-
-    public TimeRangeExistWeight(IndexSearcher searcher) throws IOException {
-      super(TimeRangeExistQuery.this, 1.0f);
-      targetDocWeight = targetDocQuery.createWeight(searcher, ScoreMode.COMPLETE, 1.0f);
-      trailingDocsWeight = trailingDocsQuery.createWeight(searcher, ScoreMode.COMPLETE, 1.0f);
-    }
-
-    public boolean isCacheable(LeafReaderContext leaf) {
-      return false;
-    }
-
-    @Override
-    public Scorer scorer(LeafReaderContext context) throws IOException {
-      DocIdSetIterator targetDoc = DocIdSetIterator.empty();
-      DocIdSetIterator trailingDocs = DocIdSetIterator.empty();
-      Scorer targetDocScorer = targetDocWeight.scorer(context);
-      Scorer trailingDocsScorer = trailingDocsWeight.scorer(context);
-
-      if (targetDocScorer != null) {
-        targetDoc = targetDocScorer.iterator();
+              @Override
+              public float matchCost() {
+                return 1f;
+              }
+            };
+        return new ConstantScoreScorer(this, score(), scoreMode, twoPhase);
       }
-      if (trailingDocsScorer != null) {
-        trailingDocs = trailingDocsScorer.iterator();
-      }
-      DocIdSetIterator approximation = DocIdSetIterator.all(context.reader().maxDoc());
 
-      return new ConstantScoreScorer(
-          this,
-          score(),
-          ScoreMode.COMPLETE,
-          new TwoPhaseIteratorExt(
-              context,
-              approximation,
-              targetDoc.nextDoc(),
-              fieldsBoosts.keySet(),
-              minMatch,
-              timeInterval));
-    }
+      @Override
+      public boolean isCacheable(LeafReaderContext ctx) {
+        // TODO: Change this to true when we can assume that scripts are pure functions
+        // ie. the return value is always the same given the same conditions and may not
+        // depend on the current timestamp, other documents, etc.
+        return false;
+      }
+    };
   }
 
   @Override
