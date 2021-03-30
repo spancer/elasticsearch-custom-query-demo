@@ -21,8 +21,13 @@ public class TwoPhaseIteratorExt extends TwoPhaseIterator {
   private int minMatch;
   private long timeInterval;
 
-  public TwoPhaseIteratorExt(LeafReaderContext context, DocIdSetIterator approximation, int targetDoc,
-      Set<String> fields, int minMatch, long timeInterval) {
+  public TwoPhaseIteratorExt(
+      LeafReaderContext context,
+      DocIdSetIterator approximation,
+      int targetDoc,
+      Set<String> fields,
+      int minMatch,
+      long timeInterval) {
     super(approximation);
     this.targetDoc = targetDoc;
     this.context = context;
@@ -33,11 +38,13 @@ public class TwoPhaseIteratorExt extends TwoPhaseIterator {
 
   @Override
   public boolean matches() throws IOException {
-    int currentId = approximation.nextDoc();
-    if(currentId == targetDoc)
-        return false;
-    else
-    {
+    int currentId = approximation.docID();
+    LOG.info(
+        "target: {}, current:{}",
+        targetDoc,
+        currentId);
+    if (currentId == targetDoc) return false;
+    else {
       Document current = context.reader().document(currentId);
       Document target = context.reader().document(targetDoc);
       for (String field : fields) {
@@ -56,7 +63,6 @@ public class TwoPhaseIteratorExt extends TwoPhaseIterator {
       }
       return false;
     }
-
   }
 
   @Override

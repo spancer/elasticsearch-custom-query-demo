@@ -5,6 +5,8 @@ import java.util.Map;
 import java.util.Objects;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.index.Term;
+import org.apache.lucene.search.BooleanClause.Occur;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.ConstantScoreScorer;
 import org.apache.lucene.search.ConstantScoreWeight;
 import org.apache.lucene.search.DocIdSetIterator;
@@ -29,6 +31,7 @@ public class TimeRangeExistQuery extends Query {
   private Integer minMatch;
   private Long timeInterval = 3 * 60 * 1000L; // default to 3 mins.
   TermQuery targetDocQuery; // query based on id
+  BooleanQuery trailingDocsQuery; // query based on must not.
 
   public TimeRangeExistQuery(
       Map<String, Float> fieldsBoosts, String docId, Integer minMatch, Long timeInterval) {
@@ -36,6 +39,7 @@ public class TimeRangeExistQuery extends Query {
     this.minMatch = minMatch;
     this.timeInterval = timeInterval;
     targetDocQuery = new TermQuery(new Term(IdFieldMapper.NAME, docId));
+    trailingDocsQuery = new BooleanQuery.Builder().add(targetDocQuery, Occur.MUST_NOT).build();
   }
 
   @Override
@@ -52,6 +56,7 @@ public class TimeRangeExistQuery extends Query {
     public TimeRangeExistWeight(IndexSearcher searcher) throws IOException {
       super(TimeRangeExistQuery.this, 1.0f);
       targetDocWeight = targetDocQuery.createWeight(searcher, ScoreMode.COMPLETE, 1.0f);
+      trailingDocsWeight = trailingDocsQuery.createWeight(searcher, ScoreMode.COMPLETE, 1.0f);
     }
 
     public boolean isCacheable(LeafReaderContext leaf) {
@@ -60,20 +65,30 @@ public class TimeRangeExistQuery extends Query {
 
     @Override
     public Scorer scorer(LeafReaderContext context) throws IOException {
-      DocIdSetIterator approximation = DocIdSetIterator.all(context.reader().maxDoc());
       DocIdSetIterator targetDoc = DocIdSetIterator.empty();
+      DocIdSetIterator trailingDocs = DocIdSetIterator.empty();
       Scorer targetDocScorer = targetDocWeight.scorer(context);
+      Scorer trailingDocsScorer = trailingDocsWeight.scorer(context);
+
       if (targetDocScorer != null) {
         targetDoc = targetDocScorer.iterator();
       }
-      int targetDocId = targetDoc.nextDoc();
-      LOG.info("target DOC ID:{}", targetDoc);
+      if (trailingDocsScorer != null) {
+        trailingDocs = trailingDocsScorer.iterator();
+      }
+      DocIdSetIterator approximation = DocIdSetIterator.all(context.reader().maxDoc());
+
       return new ConstantScoreScorer(
           this,
           score(),
           ScoreMode.COMPLETE,
           new TwoPhaseIteratorExt(
-              context, approximation, targetDocId, fieldsBoosts.keySet(), minMatch, timeInterval));
+              context,
+              approximation,
+              targetDoc.nextDoc(),
+              fieldsBoosts.keySet(),
+              minMatch,
+              timeInterval));
     }
   }
 
