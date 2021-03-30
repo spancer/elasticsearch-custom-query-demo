@@ -1,0 +1,5 @@
+org\elasticsearch\plugin\TimeRangeExistQuery$1$1.class
+org\elasticsearch\plugin\TimeRangeExistQuery.class
+org\elasticsearch\plugin\TimeRangeExistQuery$1.class
+org\elasticsearch\plugin\TimeRangeExistQueryPlugin.class
+org\elasticsearch\plugin\TimeRangeExistQueryBuilder.class

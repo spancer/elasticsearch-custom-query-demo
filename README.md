@@ -148,10 +148,7 @@ The requirement is somewhat like below:
   "car2021" : {
     "mappings" : {
       "properties" : {
-        "PlateNo" : {
-          "type" : "keyword"
-        },
-        "id" : {
+       "id" : {
           "type" : "keyword"
         },
         "k1" : {
