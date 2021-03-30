@@ -75,7 +75,7 @@ The requirement is somewhat like below:
 }
 </pre>
 
-3) 用script查询，来过滤数据，把满足时间间隔（如3分钟...10分钟）的数据筛选出来。
+3) 用自定义查询，来过滤数据，把满足时间间隔（如3分钟...10分钟）的数据筛选出来。
 <pre>
 {
   "query": {
@@ -102,12 +102,12 @@ The requirement is somewhat like below:
           }
         }
       ],
-      "minimum_should_match": 3,
+      "minimum_should_match": 2,
       "must_not": [
         {
           "term": {
             "plateNo": {
-              "value": "car1"
+              "value": "car3"
             }
           }
         }
@@ -115,15 +115,76 @@ The requirement is somewhat like below:
     }
   },
   "post_filter": {
-    "script": {
-      "script": {
-        "source":"",//script to verify whether two cars' shotTime interval is less than 3 mins while two cars were captured by the same camera.
-        "lang": "painless"
-      }
+    "timeRangeExist": {
+      "fields": [
+        "k1",
+        "k2",
+        "k3",
+        "k4"
+      ],
+      "target_value": "car3",
+      "target_field":"plateNo",
+      "minMatch": 3,
+      "timeInterval": 10
     }
   }
 }
 
 </pre>
-4) 用script的方式，需要get document by id, 存在较多性能开销，因此计划将script的逻辑用自定义query实现。也是开发该插件的初衷。
 
+###插件参数说明：
+    timeRangeExist: 自定义函数名称，跟termquery等类似，可以用在查询，也可以用在过滤上。
+    fields: 过滤时，待比较的字段列表，比如经过多个卡口，则每一个卡口(摄像头)就是一个索引的字段；注意：索引时，该字段一定要store=true.
+    target_field & target_value, 表示要比较查询的字段与值；该场景即通过该字段与值定位到被尾随的车辆。
+    target_field: 索引时, index type 需要为keyword, 因为查询时用的是termquery，如plateNo字段。
+    target_value: 查询的值，如湘A1DJ29
+    minMatch: 最少匹配的字段数量，即匹配fields的个数。
+    timeInterval: 时间间隔，单位为：ms。 如果是3分钟的话，请传：3*60*1000
+### mapping 示例：
+<pre>
+{
+  "car2021" : {
+    "mappings" : {
+      "properties" : {
+        "PlateNo" : {
+          "type" : "keyword"
+        },
+        "id" : {
+          "type" : "keyword"
+        },
+        "k1" : {
+          "type" : "text",
+          "store" : true
+        },
+        "k2" : {
+          "type" : "text",
+          "store" : true
+        },
+        "k3" : {
+          "type" : "text",
+          "store" : true
+        },
+        "k4" : {
+          "type" : "text",
+          "store" : true
+        },
+        "k6" : {
+          "type" : "text",
+          "store" : true
+        },
+        "plateNo" : {
+          "type" : "text",
+          "fields" : {
+            "keyword" : {
+              "type" : "keyword",
+              "ignore_above" : 256
+            }
+          }
+        }
+      }
+    }
+  }
+}
+</pre>
+ 
+    
