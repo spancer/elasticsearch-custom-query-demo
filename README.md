@@ -185,5 +185,8 @@ The requirement is somewhat like below:
   }
 }
 </pre>
+
+###Warning:
+ 该方案只有在shard=0时有效，因为多个shards的情况下，通过target_field & target_value可能在当前shard查询不到目标车辆。
  
     
