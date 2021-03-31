@@ -132,7 +132,7 @@ The requirement is somewhat like below:
 
 </pre>
 
-###插件参数说明：
+### 插件参数说明：
 <pre>
     timeRangeExist: 自定义函数名称，跟termquery等类似，可以用在查询，也可以用在过滤上。
     fields: 过滤时，待比较的字段列表，比如经过多个卡口，则每一个卡口(摄像头)就是一个索引的字段；注意：索引时，该字段一定要store=true.
@@ -186,7 +186,7 @@ The requirement is somewhat like below:
 }
 </pre>
 
-###Warning:
+### Warning:
  该方案只有在shard=0时有效，因为多个shards的情况下，通过target_field & target_value可能在当前shard查询不到目标车辆。
  
     
